@@ -14,6 +14,7 @@ import (
 	"github.com/grafana/dskit/services"
 	"github.com/grafana/dskit/user"
 	"github.com/prometheus/prometheus/model/labels"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
 	"github.com/grafana/loki/v3/pkg/logproto"
@@ -23,7 +24,21 @@ import (
 )
 
 func TestSweepInstance(t *testing.T) {
-	ringClient := &fakeRingClient{}
+	replicationSet := ring.ReplicationSet{
+		Instances: []ring.InstanceDesc{
+			{Id: "localhost", Addr: "ingester0"},
+			{Id: "remotehost", Addr: "ingester1"},
+			{Id: "otherhost", Addr: "ingester2"},
+		},
+	}
+
+	fakeRing := &fakeRing{}
+	fakeRing.On("Get", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(replicationSet, nil)
+
+	ringClient := &fakeRingClient{
+		ring: fakeRing,
+	}
+
 	ing, err := New(defaultIngesterTestConfig(t), ringClient, "foo", nil, log.NewNopLogger())
 	require.NoError(t, err)
 	defer services.StopAndAwaitTerminated(context.Background(), ing) //nolint:errcheck
@@ -98,7 +113,9 @@ func defaultIngesterTestConfig(t testing.TB) Config {
 	return cfg
 }
 
-type fakeRingClient struct{}
+type fakeRingClient struct {
+	ring ring.ReadRing
+}
 
 func (f *fakeRingClient) Pool() *ring_client.Pool {
 	panic("not implemented")
@@ -133,82 +150,97 @@ func (f *fakeRingClient) AddListener(_ services.Listener) {
 }
 
 func (f *fakeRingClient) Ring() ring.ReadRing {
-	return &fakeRing{}
+	return f.ring
 }
 
-type fakeRing struct{}
+type fakeRing struct {
+	mock.Mock
+}
 
 // InstancesWithTokensCount returns the number of instances in the ring that have tokens.
 func (f *fakeRing) InstancesWithTokensCount() int {
-	panic("not implemented") // TODO: Implement
+	args := f.Called()
+	return args.Int(0)
 }
 
 // InstancesInZoneCount returns the number of instances in the ring that are registered in given zone.
-func (f *fakeRing) InstancesInZoneCount(_ string) int {
-	panic("not implemented") // TODO: Implement
+func (f *fakeRing) InstancesInZoneCount(zone string) int {
+	args := f.Called(zone)
+	return args.Int(0)
 }
 
 // InstancesWithTokensInZoneCount returns the number of instances in the ring that are registered in given zone and have tokens.
-func (f *fakeRing) InstancesWithTokensInZoneCount(_ string) int {
-	panic("not implemented") // TODO: Implement
+func (f *fakeRing) InstancesWithTokensInZoneCount(zone string) int {
+	args := f.Called(zone)
+	return args.Int(0)
 }
 
 // ZonesCount returns the number of zones for which there's at least 1 instance registered in the ring.
 func (f *fakeRing) ZonesCount() int {
-	panic("not implemented") // TODO: Implement
+	args := f.Called()
+	return args.Int(0)
 }
 
 func (f *fakeRing) Get(
-	_ uint32,
-	_ ring.Operation,
-	_ []ring.InstanceDesc,
-	_ []string,
-	_ []string,
+	key uint32,
+	op ring.Operation,
+	bufInstances []ring.InstanceDesc,
+	bufStrings1, bufStrings2 []string,
 ) (ring.ReplicationSet, error) {
-	panic("not implemented")
+	args := f.Called(key, op, bufInstances, bufStrings1, bufStrings2)
+	return args.Get(0).(ring.ReplicationSet), args.Error(1)
 }
 
-func (f *fakeRing) GetAllHealthy(_ ring.Operation) (ring.ReplicationSet, error) {
-	return ring.ReplicationSet{}, nil
+func (f *fakeRing) GetAllHealthy(op ring.Operation) (ring.ReplicationSet, error) {
+	args := f.Called(op)
+	return args.Get(0).(ring.ReplicationSet), args.Error(1)
 }
 
-func (f *fakeRing) GetReplicationSetForOperation(_ ring.Operation) (ring.ReplicationSet, error) {
-	return ring.ReplicationSet{}, nil
+func (f *fakeRing) GetReplicationSetForOperation(op ring.Operation) (ring.ReplicationSet, error) {
+	args := f.Called(op)
+	return args.Get(0).(ring.ReplicationSet), args.Error(1)
 }
 
 func (f *fakeRing) ReplicationFactor() int {
-	panic("not implemented")
+	args := f.Called()
+	return args.Int(0)
 }
 
 func (f *fakeRing) InstancesCount() int {
-	panic("not implemented")
+	args := f.Called()
+	return args.Int(0)
 }
 
-func (f *fakeRing) ShuffleShard(_ string, _ int) ring.ReadRing {
-	panic("not implemented")
+func (f *fakeRing) ShuffleShard(identifier string, size int) ring.ReadRing {
+	args := f.Called(identifier, size)
+	return args.Get(0).(ring.ReadRing)
 }
 
-func (f *fakeRing) GetInstanceState(_ string) (ring.InstanceState, error) {
-	panic("not implemented")
+func (f *fakeRing) GetInstanceState(instanceID string) (ring.InstanceState, error) {
+	args := f.Called(instanceID)
+	return args.Get(0).(ring.InstanceState), args.Error(1)
 }
 
 func (f *fakeRing) ShuffleShardWithLookback(
-	_ string,
-	_ int,
-	_ time.Duration,
-	_ time.Time,
+	identifier string,
+	size int,
+	lookbackPeriod time.Duration,
+	now time.Time,
 ) ring.ReadRing {
-	panic("not implemented")
+	args := f.Called(identifier, size, lookbackPeriod, now)
+	return args.Get(0).(ring.ReadRing)
 }
 
-func (f *fakeRing) HasInstance(_ string) bool {
-	panic("not implemented")
+func (f *fakeRing) HasInstance(instanceID string) bool {
+	args := f.Called(instanceID)
+	return args.Bool(0)
 }
 
-func (f *fakeRing) CleanupShuffleShardCache(_ string) {
-	panic("not implemented")
+func (f *fakeRing) CleanupShuffleShardCache(identifier string) {
+	f.Called(identifier)
 }
 
-func (f *fakeRing) GetTokenRangesForInstance(_ string) (ring.TokenRanges, error) {
-	panic("not implemented")
+func (f *fakeRing) GetTokenRangesForInstance(identifier string) (ring.TokenRanges, error) {
+	args := f.Called(identifier)
+	return args.Get(0).(ring.TokenRanges), args.Error(1)
 }

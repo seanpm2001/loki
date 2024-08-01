@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
+	"github.com/grafana/dskit/ring"
 	"github.com/grafana/loki/v3/pkg/logproto"
 	"github.com/grafana/loki/v3/pkg/pattern/iter"
 
@@ -21,8 +22,23 @@ import (
 
 func TestInstancePushQuery(t *testing.T) {
 	lbs := labels.New(labels.Label{Name: "test", Value: "test"})
-	ringClient := &fakeRingClient{}
+
 	ingesterID := "foo"
+	replicationSet := ring.ReplicationSet{
+		Instances: []ring.InstanceDesc{
+			{Id: ingesterID, Addr: "ingester0"},
+			{Id: "bar", Addr: "ingester1"},
+			{Id: "baz", Addr: "ingester2"},
+		},
+	}
+
+	fakeRing := &fakeRing{}
+	fakeRing.On("Get", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Return(replicationSet, nil)
+
+	ringClient := &fakeRingClient{
+		ring: fakeRing,
+	}
 
 	mockWriter := &mockEntryWriter{}
 	mockWriter.On("WriteEntry", mock.Anything, mock.Anything, mock.Anything)
