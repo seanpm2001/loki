@@ -61,7 +61,8 @@ const (
 
 	ringAutoForgetUnhealthyPeriods = 2
 
-	levelLabel       = "detected_level"
+	LevelLabel       = "detected_level"
+	LogLevelUnknown  = "unknown"
 	logLevelDebug    = "debug"
 	logLevelInfo     = "info"
 	logLevelWarn     = "warn"
@@ -69,7 +70,6 @@ const (
 	logLevelFatal    = "fatal"
 	logLevelCritical = "critical"
 	logLevelTrace    = "trace"
-	logLevelUnknown  = "unknown"
 )
 
 var (
@@ -406,9 +406,9 @@ func (d *Distributor) Push(ctx context.Context, req *logproto.PushRequest) (*log
 					} else {
 						logLevel = detectLogLevelFromLogEntry(entry, structuredMetadata)
 					}
-					if logLevel != logLevelUnknown && logLevel != "" {
+					if logLevel != LogLevelUnknown && logLevel != "" {
 						entry.StructuredMetadata = append(entry.StructuredMetadata, logproto.LabelAdapter{
-							Name:  levelLabel,
+							Name:  LevelLabel,
 							Value: logLevel,
 						})
 					}
@@ -902,7 +902,7 @@ func detectLogLevelFromLogEntry(entry logproto.Entry, structuredMetadata labels.
 			return logLevelInfo
 		}
 		if otlpSeverityNumber == int(plog.SeverityNumberUnspecified) {
-			return logLevelUnknown
+			return LogLevelUnknown
 		} else if otlpSeverityNumber <= int(plog.SeverityNumberTrace4) {
 			return logLevelTrace
 		} else if otlpSeverityNumber <= int(plog.SeverityNumberDebug4) {
@@ -916,7 +916,7 @@ func detectLogLevelFromLogEntry(entry logproto.Entry, structuredMetadata labels.
 		} else if otlpSeverityNumber <= int(plog.SeverityNumberFatal4) {
 			return logLevelFatal
 		}
-		return logLevelUnknown
+		return LogLevelUnknown
 	}
 
 	return extractLogLevelFromLogLine(entry.Line)
@@ -1016,5 +1016,5 @@ func detectLevelFromLogLine(log string) string {
 	if strings.Contains(log, "debug:") || strings.Contains(log, "DEBUG:") {
 		return logLevelDebug
 	}
-	return logLevelUnknown
+	return LogLevelUnknown
 }

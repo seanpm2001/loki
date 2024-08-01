@@ -10,15 +10,15 @@ import (
 
 type Config struct {
 	// TODO(twhitney): This needs to be a per-tenant config
-	Enabled             bool                    `yaml:"enabled,omitempty" doc:"description=Whether the pattern ingester metric aggregation is enabled."`
-	DownsamplePeriod    time.Duration           `yaml:"downsample_period"`
-	LokiAddr            string                  `yaml:"loki_address,omitempty" doc:"description=The address of the Loki instance to push aggregated metrics to."`
-	WriteTimeout        time.Duration           `yaml:"timeout,omitempty" doc:"description=The timeout for writing to Loki."`
-	PushPeriod          time.Duration           `yaml:"push_period,omitempty" doc:"description=How long to wait in between pushes to Loki."`
-	HTTPClientConfig    config.HTTPClientConfig `yaml:"http_client_config,omitempty" doc:"description=The HTTP client configuration for pushing metrics to Loki."`
-	UseTLS              bool                    `yaml:"use_tls,omitempty" doc:"description=Whether to use TLS for pushing metrics to Loki."`
-	BasicAuth           BasicAuth               `yaml:"basic_auth,omitempty" doc:"description=The basic auth configuration for pushing metrics to Loki."`
-	BackoffConfig       backoff.Config          `yaml:"backoff_config,omitempty" doc:"description=The backoff configuration for pushing metrics to Loki."`
+	Enabled          bool                    `yaml:"enabled,omitempty" doc:"description=Whether the pattern ingester metric aggregation is enabled."`
+	DownsamplePeriod time.Duration           `yaml:"downsample_period"`
+	LokiAddr         string                  `yaml:"loki_address,omitempty" doc:"description=The address of the Loki instance to push aggregated metrics to."`
+	WriteTimeout     time.Duration           `yaml:"timeout,omitempty" doc:"description=The timeout for writing to Loki."`
+	PushPeriod       time.Duration           `yaml:"push_period,omitempty" doc:"description=How long to wait in between pushes to Loki."`
+	HTTPClientConfig config.HTTPClientConfig `yaml:"http_client_config,omitempty" doc:"description=The HTTP client configuration for pushing metrics to Loki."`
+	UseTLS           bool                    `yaml:"use_tls,omitempty" doc:"description=Whether to use TLS for pushing metrics to Loki."`
+	BasicAuth        BasicAuth               `yaml:"basic_auth,omitempty" doc:"description=The basic auth configuration for pushing metrics to Loki."`
+	BackoffConfig    backoff.Config          `yaml:"backoff_config,omitempty" doc:"description=The backoff configuration for pushing metrics to Loki."`
 }
 
 // RegisterFlags registers pattern ingester related flags.

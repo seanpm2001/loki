@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-kit/log"
 	"github.com/prometheus/prometheus/model/labels"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
 	"github.com/grafana/loki/v3/pkg/logproto"
@@ -20,11 +21,20 @@ import (
 
 func TestInstancePushQuery(t *testing.T) {
 	lbs := labels.New(labels.Label{Name: "test", Value: "test"})
+	ringClient := &fakeRingClient{}
+	ingesterID := "foo"
+
+	mockWriter := &mockEntryWriter{}
+	mockWriter.On("WriteEntry", mock.Anything, mock.Anything, mock.Anything)
+
 	inst, err := newInstance(
 		"foo",
 		log.NewNopLogger(),
 		newIngesterMetrics(nil, "test"),
 		drain.DefaultConfig(),
+		ringClient,
+		ingesterID,
+		mockWriter,
 	)
 	require.NoError(t, err)
 
@@ -67,4 +77,16 @@ func TestInstancePushQuery(t *testing.T) {
 	res, err := iter.ReadAll(it)
 	require.NoError(t, err)
 	require.Equal(t, 2, len(res.Series))
+}
+
+type mockEntryWriter struct {
+	mock.Mock
+}
+
+func (m *mockEntryWriter) WriteEntry(ts time.Time, entry string, lbls labels.Labels) {
+	_ = m.Called(ts, entry, lbls)
+}
+
+func (m *mockEntryWriter) Stop() {
+	_ = m.Called()
 }

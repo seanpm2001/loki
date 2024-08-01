@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/dustin/go-humanize"
 	"github.com/go-kit/log"
 	"github.com/grafana/dskit/httpgrpc"
 	"github.com/grafana/dskit/multierror"
@@ -15,7 +14,7 @@ import (
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/model/labels"
 
-	"github.com/grafana/loki/v3/pkg/detection"
+	"github.com/grafana/loki/v3/pkg/distributor"
 	"github.com/grafana/loki/v3/pkg/ingester"
 	"github.com/grafana/loki/v3/pkg/ingester/index"
 	"github.com/grafana/loki/v3/pkg/loghttp/push"
@@ -40,7 +39,7 @@ type instance struct {
 	logger     log.Logger
 	metrics    *ingesterMetrics
 	drainCfg   *drain.Config
-	ringClient *RingClient
+	ringClient RingClient
 	ingesterID string
 
 	aggMetricsLock     sync.Mutex
@@ -54,7 +53,15 @@ type aggregatedMetrics struct {
 	count uint64
 }
 
-func newInstance(instanceID string, logger log.Logger, metrics *ingesterMetrics, drainCfg *drain.Config, ringClient *RingClient, ingesterID string, writer aggregation.EntryWriter) (*instance, error) {
+func newInstance(
+	instanceID string,
+	logger log.Logger,
+	metrics *ingesterMetrics,
+	drainCfg *drain.Config,
+	ringClient RingClient,
+	ingesterID string,
+	writer aggregation.EntryWriter,
+) (*instance, error) {
 	index, err := index.NewBitPrefixWithShards(indexShards)
 	if err != nil {
 		return nil, err
@@ -85,7 +92,7 @@ func (i *instance) Push(ctx context.Context, req *logproto.PushRequest) error {
 		// All streams are observed for metrics
 		i.Observe(reqStream.Labels, reqStream.Entries)
 
-		// But only owned streamd are processed for patterns
+		// But only owned streamed are processed for patterns
 		ownedStream, err := i.isOwnedStream(i.ingesterID, reqStream.Labels)
 		if err != nil {
 			appendErr.Add(err)
@@ -117,7 +124,7 @@ func (i *instance) Push(ctx context.Context, req *logproto.PushRequest) error {
 
 func (i *instance) isOwnedStream(ingesterID string, stream string) (bool, error) {
 	var descs [1]ring.InstanceDesc
-	replicationSet, err := i.ringClient.ring.Get(
+	replicationSet, err := i.ringClient.Ring().Get(
 		lokiring.TokenFor(i.instanceID, stream),
 		ring.WriteNoExtend,
 		descs[:0],
@@ -293,7 +300,7 @@ func (i *instance) writeAggregatedMetrics(
 
 	level := streamLbls.Get("level")
 	if level == "" {
-		level = detection.LogLevelUnknown
+		level = distributor.LogLevelUnknown
 	}
 
 	newLbls := labels.Labels{
@@ -304,30 +311,8 @@ func (i *instance) writeAggregatedMetrics(
 	if i.writer != nil {
 		i.writer.WriteEntry(
 			now.Time(),
-			AggregatedMetricEntry(now, totalBytes, totalCount, service, streamLbls),
+			aggregation.AggregatedMetricEntry(now, totalBytes, totalCount, service, streamLbls),
 			newLbls,
 		)
 	}
-}
-
-func AggregatedMetricEntry(
-	ts model.Time,
-	totalBytes, totalCount uint64,
-	service string,
-	lbls labels.Labels,
-) string {
-	byteString := humanize.Bytes(totalBytes)
-	base := fmt.Sprintf(
-		"ts=%d bytes=%s count=%d %s=%s",
-		ts.UnixNano(),
-		byteString,
-		totalCount,
-		push.LabelServiceName, service,
-	)
-
-	for _, l := range lbls {
-		base += fmt.Sprintf(" %s=%s", l.Name, l.Value)
-	}
-
-	return base
 }

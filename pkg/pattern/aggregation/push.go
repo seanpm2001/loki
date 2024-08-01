@@ -11,12 +11,15 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dustin/go-humanize"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/golang/snappy"
 	"github.com/prometheus/common/config"
+	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/model/labels"
 
+	"github.com/grafana/loki/v3/pkg/loghttp/push"
 	"github.com/grafana/loki/v3/pkg/logproto"
 	"github.com/grafana/loki/v3/pkg/logql/syntax"
 	"github.com/grafana/loki/v3/pkg/util/build"
@@ -306,4 +309,26 @@ func (p *Push) send(ctx context.Context, payload []byte) (int, error) {
 	}
 
 	return status, err
+}
+
+func AggregatedMetricEntry(
+	ts model.Time,
+	totalBytes, totalCount uint64,
+	service string,
+	lbls labels.Labels,
+) string {
+	byteString := humanize.Bytes(totalBytes)
+	base := fmt.Sprintf(
+		"ts=%d bytes=%s count=%d %s=%s",
+		ts.UnixNano(),
+		byteString,
+		totalCount,
+		push.LabelServiceName, service,
+	)
+
+	for _, l := range lbls {
+		base += fmt.Sprintf(" %s=%s", l.Name, l.Value)
+	}
+
+	return base
 }

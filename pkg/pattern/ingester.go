@@ -68,7 +68,7 @@ func (cfg *Config) Validate() error {
 type Ingester struct {
 	services.Service
 	lifecycler *ring.Lifecycler
-	ringClient *RingClient
+	ringClient RingClient
 
 	lifecyclerWatcher *services.FailureWatcher
 
@@ -92,7 +92,7 @@ type Ingester struct {
 
 func New(
 	cfg Config,
-	ringClient *RingClient,
+	ringClient RingClient,
 	metricsNamespace string,
 	registerer prometheus.Registerer,
 	logger log.Logger,
@@ -172,7 +172,7 @@ func (i *Ingester) stopping(_ error) error {
 		flushQueue.Close()
 	}
 	i.flushQueuesDone.Wait()
-  i.stopWriters()
+	i.stopWriters()
 	return err
 }
 
@@ -204,7 +204,7 @@ func (i *Ingester) loop() {
 	flushTicker := util.NewTickerWithJitter(i.cfg.FlushCheckPeriod, j)
 	defer flushTicker.Stop()
 
-if i.cfg.MetricAggregation.Enabled {
+	if i.cfg.MetricAggregation.Enabled {
 		downsampleTicker := time.NewTimer(i.cfg.MetricAggregation.DownsamplePeriod)
 		defer downsampleTicker.Stop()
 		for {
@@ -335,7 +335,7 @@ func (i *Ingester) GetOrCreateInstance(instanceID string) (*instance, error) { /
 			i.drainCfg,
 			i.ringClient,
 			i.lifecycler.ID,
-      writer,
+			writer,
 		)
 		if err != nil {
 			return nil, err

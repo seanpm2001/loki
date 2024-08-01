@@ -30,8 +30,9 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
-	"github.com/grafana/loki/pkg/push"
 	loghttp_push "github.com/grafana/loki/v3/pkg/loghttp/push"
+
+	"github.com/grafana/loki/pkg/push"
 
 	"github.com/grafana/loki/v3/pkg/ingester"
 	"github.com/grafana/loki/v3/pkg/ingester/client"
@@ -1577,7 +1578,7 @@ func Test_DetectLogLevels(t *testing.T) {
 		require.Equal(t, `{foo="bar"}`, topVal.Streams[0].Labels)
 		require.Equal(t, push.LabelsAdapter{
 			{
-				Name:  levelLabel,
+				Name:  LevelLabel,
 				Value: logLevelWarn,
 			},
 		}, topVal.Streams[0].Entries[0].StructuredMetadata)
@@ -1594,7 +1595,7 @@ func Test_DetectLogLevels(t *testing.T) {
 		require.Equal(t, `{foo="bar", level="debug"}`, topVal.Streams[0].Labels)
 		sm := topVal.Streams[0].Entries[0].StructuredMetadata
 		require.Len(t, sm, 1)
-		require.Equal(t, sm[0].Name, levelLabel)
+		require.Equal(t, sm[0].Name, LevelLabel)
 		require.Equal(t, sm[0].Value, logLevelDebug)
 	})
 
@@ -1619,7 +1620,7 @@ func Test_DetectLogLevels(t *testing.T) {
 				Name:  "severity",
 				Value: logLevelWarn,
 			}, {
-				Name:  levelLabel,
+				Name:  LevelLabel,
 				Value: logLevelWarn,
 			},
 		}, sm)
@@ -1662,7 +1663,7 @@ func Test_detectLogLevelFromLogEntry(t *testing.T) {
 			entry: logproto.Entry{
 				Line: "foo",
 			},
-			expectedLogLevel: logLevelUnknown,
+			expectedLogLevel: LogLevelUnknown,
 		},
 		{
 			name: "non otlp with log level keywords in log line",
@@ -1746,7 +1747,7 @@ func Test_detectLogLevelFromLogEntry(t *testing.T) {
 			entry: logproto.Entry{
 				Line: `foo=bar msg="message with keyword but it should not get picked up" level=NA`,
 			},
-			expectedLogLevel: logLevelUnknown,
+			expectedLogLevel: LogLevelUnknown,
 		},
 		{
 			name: "logfmt log line with label Severity is allowed for level detection",
@@ -1799,7 +1800,7 @@ func Benchmark_extractLogLevelFromLogLine(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		level := extractLogLevelFromLogLine(logLine)
-		require.Equal(b, logLevelUnknown, level)
+		require.Equal(b, LogLevelUnknown, level)
 	}
 }
 

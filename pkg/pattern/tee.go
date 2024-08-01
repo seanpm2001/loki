@@ -18,7 +18,7 @@ import (
 type Tee struct {
 	cfg        Config
 	logger     log.Logger
-	ringClient *RingClient
+	ringClient RingClient
 
 	ingesterAppends         *prometheus.CounterVec
 	fallbackIngesterAppends *prometheus.CounterVec
@@ -26,7 +26,7 @@ type Tee struct {
 
 func NewTee(
 	cfg Config,
-	ringClient *RingClient,
+	ringClient RingClient,
 	metricsNamespace string,
 	registerer prometheus.Registerer,
 	logger log.Logger,
@@ -71,14 +71,14 @@ func (t *Tee) sendStream(tenant string, stream distributor.KeyedStream) error {
 	// Only owned streams are processed for patterns, however any pattern ingester can
 	// aggregate metrics for any stream. Therefore, if we can't send the owned stream,
 	// try to send it to any pattern ingester so we at least capture the metrics.
-	replicationSet, err := t.ringClient.ring.GetAllHealthy(ring.Read)
+	replicationSet, err := t.ringClient.Ring().GetAllHealthy(ring.Read)
 	if replicationSet.Instances == nil {
 		return errors.New("no instances found")
 	}
 
 	for _, instance := range replicationSet.Instances {
 		addr := instance.Addr
-		client, err := t.ringClient.pool.GetClientFor(addr)
+		client, err := t.ringClient.Pool().GetClientFor(addr)
 		if err != nil {
 			req := &logproto.PushRequest{
 				Streams: []logproto.Stream{
@@ -107,7 +107,7 @@ func (t *Tee) sendStream(tenant string, stream distributor.KeyedStream) error {
 
 func (t *Tee) sendOwnedStream(tenant string, stream distributor.KeyedStream) error {
 	var descs [1]ring.InstanceDesc
-	replicationSet, err := t.ringClient.ring.Get(stream.HashKey, ring.WriteNoExtend, descs[:0], nil, nil)
+	replicationSet, err := t.ringClient.Ring().Get(stream.HashKey, ring.WriteNoExtend, descs[:0], nil, nil)
 	if err != nil {
 		return err
 	}
@@ -115,7 +115,7 @@ func (t *Tee) sendOwnedStream(tenant string, stream distributor.KeyedStream) err
 		return errors.New("no instances found")
 	}
 	addr := replicationSet.Instances[0].Addr
-	client, err := t.ringClient.pool.GetClientFor(addr)
+	client, err := t.ringClient.Pool().GetClientFor(addr)
 	if err != nil {
 		return err
 	}
