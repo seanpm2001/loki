@@ -363,3 +363,21 @@ func (i *Ingester) getInstances() []*instance {
 	}
 	return instances
 }
+
+func (i *Ingester) stopWriters() {
+	instances := i.getInstances()
+
+	for _, instance := range instances {
+		if instance.writer != nil {
+			instance.writer.Stop()
+		}
+	}
+}
+
+func (i *Ingester) downsampleMetrics(ts model.Time) {
+	instances := i.getInstances()
+
+	for _, instance := range instances {
+		instance.Downsample(ts)
+	}
+}

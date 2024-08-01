@@ -169,6 +169,7 @@ func (v Validator) ValidateLabels(ctx validationContext, ls labels.Labels, strea
 	if ls.Has(push.LabelServiceName) {
 		numLabelNames--
 	}
+
 	if numLabelNames > ctx.maxLabelNamesPerSeries {
 		updateMetrics(validation.MaxLabelNamesPerSeries, ctx.userID, stream)
 		return fmt.Errorf(validation.MaxLabelNamesPerSeriesErrorMsg, stream.Labels, numLabelNames, ctx.maxLabelNamesPerSeries)
