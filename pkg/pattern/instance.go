@@ -276,9 +276,6 @@ func (i *instance) Downsample(now model.Time) {
 	}()
 
 	for stream, metrics := range i.aggMetricsByStream {
-		// TODO(twhitney)
-		// c.metrics.samples.Inc()
-
 		lbls, err := syntax.ParseLabels(stream)
 		if err != nil {
 			continue
@@ -314,5 +311,7 @@ func (i *instance) writeAggregatedMetrics(
 			aggregation.AggregatedMetricEntry(now, totalBytes, totalCount, service, streamLbls),
 			newLbls,
 		)
+
+		i.metrics.samples.WithLabelValues(service).Inc()
 	}
 }
