@@ -703,8 +703,8 @@ func (t *Loki) setupModuleManager() error {
 	mm.RegisterModule(QuerySchedulerRing, t.initQuerySchedulerRing, modules.UserInvisibleModule)
 	mm.RegisterModule(Analytics, t.initAnalytics)
 	mm.RegisterModule(CacheGenerationLoader, t.initCacheGenerationLoader)
-	mm.RegisterModule(PatternIngester, t.initPatternIngester)
 	mm.RegisterModule(PatternRingClient, t.initPatternRingClient, modules.UserInvisibleModule)
+	mm.RegisterModule(PatternIngester, t.initPatternIngester)
 	mm.RegisterModule(Metastore, t.initMetastore)
 	mm.RegisterModule(MetastoreClient, t.initMetastoreClient, modules.UserInvisibleModule)
 
@@ -738,8 +738,8 @@ func (t *Loki) setupModuleManager() error {
 		BloomPlanner:             {Server, BloomStore, Analytics, Store},
 		BloomBuilder:             {Server, BloomStore, Analytics, Store},
 		BloomStore:               {IndexGatewayRing},
-		PatternIngester:          {Server, MemberlistKV, Analytics},
 		PatternRingClient:        {Server, MemberlistKV, Analytics},
+		PatternIngester:          {Server, MemberlistKV, Analytics, PatternRingClient},
 		IngesterRF1RingClient:    {Server, MemberlistKV, Analytics},
 		Metastore:                {Server, MetastoreClient},
 		IngesterQuerier:          {Ring},

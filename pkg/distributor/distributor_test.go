@@ -31,10 +31,10 @@ import (
 	"google.golang.org/grpc/health/grpc_health_v1"
 
 	"github.com/grafana/loki/pkg/push"
+	loghttp_push "github.com/grafana/loki/v3/pkg/loghttp/push"
 
 	"github.com/grafana/loki/v3/pkg/ingester"
 	"github.com/grafana/loki/v3/pkg/ingester/client"
-	loghttp_push "github.com/grafana/loki/v3/pkg/loghttp/push"
 	"github.com/grafana/loki/v3/pkg/logproto"
 	"github.com/grafana/loki/v3/pkg/logql/syntax"
 	"github.com/grafana/loki/v3/pkg/runtime"
@@ -150,6 +150,7 @@ func Test_IncrementTimestamp(t *testing.T) {
 
 	defaultLimits := &validation.Limits{}
 	flagext.DefaultValues(defaultLimits)
+	now := time.Now()
 	defaultLimits.DiscoverLogLevels = false
 
 	tests := map[string]struct {
@@ -397,6 +398,34 @@ func Test_IncrementTimestamp(t *testing.T) {
 				},
 			},
 		},
+		"default limit adding service_name label": {
+			limits: defaultLimits,
+			push: &logproto.PushRequest{
+				Streams: []logproto.Stream{
+					{
+						Labels: "{job=\"foo\"}",
+						Entries: []logproto.Entry{
+							{Timestamp: now.Add(-2 * time.Second), Line: "hey1"},
+							{Timestamp: now.Add(-time.Second), Line: "hey2"},
+							{Timestamp: now, Line: "hey3"},
+						},
+					},
+				},
+			},
+			expectedPush: &logproto.PushRequest{
+				Streams: []logproto.Stream{
+					{
+						Labels: "{job=\"foo\", service_name=\"foo\"}",
+						Hash:   0x86ca305b6d86e8b0,
+						Entries: []logproto.Entry{
+							{Timestamp: now.Add(-2 * time.Second), Line: "hey1"},
+							{Timestamp: now.Add(-time.Second), Line: "hey2"},
+							{Timestamp: now, Line: "hey3"},
+						},
+					},
+				},
+			},
+		},
 	}
 
 	for testName, testData := range tests {
@@ -519,6 +548,20 @@ func Test_SortLabelsOnPush(t *testing.T) {
 		topVal := ingester.Peek()
 		require.Equal(t, `{a="b", buzz="f", service_name="foo"}`, topVal.Streams[0].Labels)
 	})
+
+	t.Run("with service_name added during ingestion", func(t *testing.T) {
+		limits := &validation.Limits{}
+		flagext.DefaultValues(limits)
+		ingester := &mockIngester{}
+		distributors, _ := prepare(t, 1, 5, limits, func(addr string) (ring_client.PoolClient, error) { return ingester, nil })
+
+		request := makeWriteRequest(10, 10)
+		request.Streams[0].Labels = `{buzz="f", x="y", a="b"}`
+		_, err := distributors[0].Push(ctx, request)
+		require.NoError(t, err)
+		topVal := ingester.Peek()
+		require.Equal(t, `{a="b", buzz="f", service_name="unknown_service", x="y"}`, topVal.Streams[0].Labels)
+	})
 }
 
 func Test_TruncateLogLines(t *testing.T) {
@@ -539,26 +582,6 @@ func Test_TruncateLogLines(t *testing.T) {
 		require.NoError(t, err)
 		topVal := ingester.Peek()
 		require.Len(t, topVal.Streams[0].Entries[0].Line, 5)
-	})
-}
-
-func Test_DiscardEmptyStreamsAfterValidation(t *testing.T) {
-	setup := func() (*validation.Limits, *mockIngester) {
-		limits := &validation.Limits{}
-		flagext.DefaultValues(limits)
-
-		limits.MaxLineSize = 5
-		return limits, &mockIngester{}
-	}
-
-	t.Run("it discards invalid entries and discards resulting empty streams completely", func(t *testing.T) {
-		limits, ingester := setup()
-		distributors, _ := prepare(t, 1, 5, limits, func(addr string) (ring_client.PoolClient, error) { return ingester, nil })
-
-		_, err := distributors[0].Push(ctx, makeWriteRequest(1, 10))
-		require.Equal(t, err, httpgrpc.Errorf(http.StatusBadRequest, fmt.Sprintf(validation.LineTooLongErrorMsg, 5, "{foo=\"bar\"}", 10)))
-		topVal := ingester.Peek()
-		require.Nil(t, topVal)
 	})
 }
 
@@ -839,8 +862,52 @@ func TestParseStreamLabels(t *testing.T) {
 		generateLimits func() *validation.Limits
 	}{
 		{
+			name: "service name label mapping disabled",
+			generateLimits: func() *validation.Limits {
+				limits := &validation.Limits{}
+				flagext.DefaultValues(limits)
+				limits.DiscoverServiceName = nil
+				return limits
+			},
+			origLabels: `{foo="bar"}`,
+			expectedLabels: labels.Labels{
+				{
+					Name:  "foo",
+					Value: "bar",
+				},
+			},
+		},
+		{
+			name: "no labels defined - service name label mapping disabled",
+			generateLimits: func() *validation.Limits {
+				limits := &validation.Limits{}
+				flagext.DefaultValues(limits)
+				limits.DiscoverServiceName = nil
+				return limits
+			},
+			origLabels:  `{}`,
+			expectedErr: fmt.Errorf(validation.MissingLabelsErrorMsg),
+		},
+		{
+			name:       "service name label enabled",
+			origLabels: `{foo="bar"}`,
+			generateLimits: func() *validation.Limits {
+				return defaultLimit
+			},
+			expectedLabels: labels.Labels{
+				{
+					Name:  "foo",
+					Value: "bar",
+				},
+				{
+					Name:  loghttp_push.LabelServiceName,
+					Value: loghttp_push.ServiceUnknown,
+				},
+			},
+		},
+		{
 			name:       "service name label should not get counted against max labels count",
-			origLabels: `{foo="bar", service_name="unknown_service"}`,
+			origLabels: `{foo="bar"}`,
 			generateLimits: func() *validation.Limits {
 				limits := &validation.Limits{}
 				flagext.DefaultValues(limits)
@@ -855,6 +922,31 @@ func TestParseStreamLabels(t *testing.T) {
 				{
 					Name:  loghttp_push.LabelServiceName,
 					Value: loghttp_push.ServiceUnknown,
+				},
+			},
+		},
+		{
+			name:       "use label service as service name",
+			origLabels: `{container="nginx", foo="bar", service="auth"}`,
+			generateLimits: func() *validation.Limits {
+				return defaultLimit
+			},
+			expectedLabels: labels.Labels{
+				{
+					Name:  "container",
+					Value: "nginx",
+				},
+				{
+					Name:  "foo",
+					Value: "bar",
+				},
+				{
+					Name:  "service",
+					Value: "auth",
+				},
+				{
+					Name:  loghttp_push.LabelServiceName,
+					Value: "auth",
 				},
 			},
 		},

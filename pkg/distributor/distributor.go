@@ -787,6 +787,22 @@ func (d *Distributor) parseStreamLabels(vContext validationContext, key string, 
 		return nil, "", 0, err
 	}
 
+	// We do not want to count service_name added by us in the stream limit so adding it after validating original labels.
+	// We also don't want to add service name to aggregated metrics.
+	if !ls.Has(push.LabelServiceName) && !ls.Has(push.AggregatedMetricLabel) &&
+		len(vContext.discoverServiceName) > 0 {
+		serviceName := push.ServiceUnknown
+		for _, labelName := range vContext.discoverServiceName {
+			if labelVal := ls.Get(labelName); labelVal != "" {
+				serviceName = labelVal
+				break
+			}
+		}
+
+		ls = labels.NewBuilder(ls).Set(push.LabelServiceName, serviceName).Labels()
+		stream.Labels = ls.String()
+	}
+
 	lsHash := ls.Hash()
 
 	d.labelCache.Add(key, labelData{ls, lsHash})

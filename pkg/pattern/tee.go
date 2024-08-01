@@ -20,7 +20,8 @@ type Tee struct {
 	logger     log.Logger
 	ringClient *RingClient
 
-	ingesterAppends *prometheus.CounterVec
+	ingesterAppends         *prometheus.CounterVec
+	fallbackIngesterAppends *prometheus.CounterVec
 }
 
 func NewTee(
@@ -36,7 +37,11 @@ func NewTee(
 		logger: log.With(logger, "component", "pattern-tee"),
 		ingesterAppends: promauto.With(registerer).NewCounterVec(prometheus.CounterOpts{
 			Name: "pattern_ingester_appends_total",
-			Help: "The total number of batch appends sent to pattern ingesters.",
+			Help: "The total number of batch appends of owned streams sent to pattern ingesters.",
+		}, []string{"ingester", "status"}),
+		fallbackIngesterAppends: promauto.With(registerer).NewCounterVec(prometheus.CounterOpts{
+			Name: "pattern_ingester_fallback_appends_total",
+			Help: "The total number of batch appends sent to fallback pattern ingesters, for not owned streams.",
 		}, []string{"ingester", "status"}),
 		cfg:        cfg,
 		ringClient: ringClient,
@@ -57,6 +62,50 @@ func (t *Tee) Duplicate(tenant string, streams []distributor.KeyedStream) {
 }
 
 func (t *Tee) sendStream(tenant string, stream distributor.KeyedStream) error {
+	err := t.sendOwnedStream(tenant, stream)
+	if err == nil {
+		return nil
+	}
+
+	// Pattern ingesters serve 2 functions, processing patterns and aggregating metrics.
+	// Only owned streams are processed for patterns, however any pattern ingester can
+	// aggregate metrics for any stream. Therefore, if we can't send the owned stream,
+	// try to send it to any pattern ingester so we at least capture the metrics.
+	replicationSet, err := t.ringClient.ring.GetAllHealthy(ring.Read)
+	if replicationSet.Instances == nil {
+		return errors.New("no instances found")
+	}
+
+	for _, instance := range replicationSet.Instances {
+		addr := instance.Addr
+		client, err := t.ringClient.pool.GetClientFor(addr)
+		if err != nil {
+			req := &logproto.PushRequest{
+				Streams: []logproto.Stream{
+					stream.Stream,
+				},
+			}
+
+			ctx, cancel := context.WithTimeout(
+				user.InjectOrgID(context.Background(), tenant),
+				t.cfg.ClientConfig.RemoteTimeout,
+			)
+			defer cancel()
+			_, err = client.(logproto.PatternClient).Push(ctx, req)
+			if err != nil {
+				t.fallbackIngesterAppends.WithLabelValues(addr, "fail").Inc()
+				continue
+			}
+			t.fallbackIngesterAppends.WithLabelValues(addr, "success").Inc()
+			// bail after any success to prevent sending more than one
+			return nil
+		}
+	}
+
+	return err
+}
+
+func (t *Tee) sendOwnedStream(tenant string, stream distributor.KeyedStream) error {
 	var descs [1]ring.InstanceDesc
 	replicationSet, err := t.ringClient.ring.Get(stream.HashKey, ring.WriteNoExtend, descs[:0], nil, nil)
 	if err != nil {

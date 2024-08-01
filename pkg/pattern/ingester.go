@@ -16,11 +16,13 @@ import (
 	"github.com/grafana/dskit/services"
 	"github.com/grafana/dskit/tenant"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/common/model"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
 	ring_client "github.com/grafana/dskit/ring/client"
 
 	"github.com/grafana/loki/v3/pkg/logproto"
+	"github.com/grafana/loki/v3/pkg/pattern/aggregation"
 	"github.com/grafana/loki/v3/pkg/pattern/clientpool"
 	"github.com/grafana/loki/v3/pkg/pattern/drain"
 	"github.com/grafana/loki/v3/pkg/pattern/iter"
@@ -38,6 +40,7 @@ type Config struct {
 	FlushCheckPeriod  time.Duration         `yaml:"flush_check_period"`
 	MaxClusters       int                   `yaml:"max_clusters,omitempty" doc:"description=The maximum number of detected pattern clusters that can be created by streams."`
 	MaxEvictionRatio  float64               `yaml:"max_eviction_ratio,omitempty" doc:"description=The maximum eviction ratio of patterns per stream. Once that ratio is reached, the stream will throttled pattern detection."`
+	MetricAggregation aggregation.Config    `yaml:"metric_aggregation,omitempty" doc:"description=Configures the metric aggregation and storage behavior of the pattern ingester."`
 
 	// For testing.
 	factory ring_client.PoolFactory `yaml:"-"`
@@ -47,6 +50,7 @@ type Config struct {
 func (cfg *Config) RegisterFlags(fs *flag.FlagSet) {
 	cfg.LifecyclerConfig.RegisterFlagsWithPrefix("pattern-ingester.", fs, util_log.Logger)
 	cfg.ClientConfig.RegisterFlags(fs)
+	cfg.MetricAggregation.RegisterFlagsWithPrefix(fs, "pattern-ingester.")
 	fs.BoolVar(&cfg.Enabled, "pattern-ingester.enabled", false, "Flag to enable or disable the usage of the pattern-ingester component.")
 	fs.IntVar(&cfg.ConcurrentFlushes, "pattern-ingester.concurrent-flushes", 32, "How many flushes can happen concurrently from each stream.")
 	fs.DurationVar(&cfg.FlushCheckPeriod, "pattern-ingester.flush-check-period", 1*time.Minute, "How often should the ingester see if there are any blocks to flush. The first flush check is delayed by a random time up to 0.8x the flush check period. Additionally, there is +/- 1% jitter added to the interval.")
@@ -64,6 +68,7 @@ func (cfg *Config) Validate() error {
 type Ingester struct {
 	services.Service
 	lifecycler *ring.Lifecycler
+	ringClient *RingClient
 
 	lifecyclerWatcher *services.FailureWatcher
 
@@ -87,6 +92,7 @@ type Ingester struct {
 
 func New(
 	cfg Config,
+	ringClient *RingClient,
 	metricsNamespace string,
 	registerer prometheus.Registerer,
 	logger log.Logger,
@@ -100,6 +106,7 @@ func New(
 
 	i := &Ingester{
 		cfg:         cfg,
+		ringClient:  ringClient,
 		logger:      log.With(logger, "component", "pattern-ingester"),
 		registerer:  registerer,
 		metrics:     metrics,
@@ -165,6 +172,7 @@ func (i *Ingester) stopping(_ error) error {
 		flushQueue.Close()
 	}
 	i.flushQueuesDone.Wait()
+  i.stopWriters()
 	return err
 }
 
@@ -196,13 +204,29 @@ func (i *Ingester) loop() {
 	flushTicker := util.NewTickerWithJitter(i.cfg.FlushCheckPeriod, j)
 	defer flushTicker.Stop()
 
-	for {
-		select {
-		case <-flushTicker.C:
-			i.sweepUsers(false, true)
-
-		case <-i.loopQuit:
-			return
+if i.cfg.MetricAggregation.Enabled {
+		downsampleTicker := time.NewTimer(i.cfg.MetricAggregation.DownsamplePeriod)
+		defer downsampleTicker.Stop()
+		for {
+			select {
+			case <-flushTicker.C:
+				i.sweepUsers(false, true)
+			case t := <-downsampleTicker.C:
+				downsampleTicker.Reset(i.cfg.MetricAggregation.DownsamplePeriod)
+				now := model.TimeFromUnixNano(t.UnixNano())
+				i.downsampleMetrics(now)
+			case <-i.loopQuit:
+				return
+			}
+		}
+	} else {
+		for {
+			select {
+			case <-flushTicker.C:
+				i.sweepUsers(false, true)
+			case <-i.loopQuit:
+				return
+			}
 		}
 	}
 }
@@ -284,11 +308,34 @@ func (i *Ingester) GetOrCreateInstance(instanceID string) (*instance, error) { /
 	inst, ok = i.instances[instanceID]
 	if !ok {
 		var err error
+		var writer aggregation.EntryWriter
+
+		aggCfg := i.cfg.MetricAggregation
+		if aggCfg.Enabled {
+			writer, err = aggregation.NewPush(
+				aggCfg.LokiAddr,
+				instanceID,
+				aggCfg.WriteTimeout,
+				aggCfg.PushPeriod,
+				aggCfg.HTTPClientConfig,
+				aggCfg.BasicAuth.Username,
+				string(aggCfg.BasicAuth.Password),
+				aggCfg.UseTLS,
+				&aggCfg.BackoffConfig,
+				i.logger,
+			)
+			if err != nil {
+				return nil, err
+			}
+		}
 		inst, err = newInstance(
 			instanceID,
 			i.logger,
 			i.metrics,
 			i.drainCfg,
+			i.ringClient,
+			i.lifecycler.ID,
+      writer,
 		)
 		if err != nil {
 			return nil, err
