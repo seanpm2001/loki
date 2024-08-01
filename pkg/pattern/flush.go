@@ -84,7 +84,6 @@ func (i *Ingester) stopWriters() {
 	}
 }
 
-
 func (i *Ingester) downsampleMetrics(ts model.Time) {
 	instances := i.getInstances()
 
