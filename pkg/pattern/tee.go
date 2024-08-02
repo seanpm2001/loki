@@ -84,15 +84,15 @@ func (t *Tee) run() {
 			)
 			defer cancel()
 
-			if err := t.sendStream(ctx, req.tenant, req.stream); err != nil {
+			if err := t.sendStream(ctx, req.stream); err != nil {
 				level.Error(t.logger).Log("msg", "failed to send stream to pattern ingester", "err", err)
 			}
 		}
 	}
 }
 
-func (t *Tee) sendStream(ctx context.Context, tenant string, stream distributor.KeyedStream) error {
-	err := t.sendOwnedStream(ctx, tenant, stream)
+func (t *Tee) sendStream(ctx context.Context, stream distributor.KeyedStream) error {
+	err := t.sendOwnedStream(ctx, stream)
 	if err == nil {
 		// Success, return early
 		return nil
@@ -131,7 +131,7 @@ func (t *Tee) sendStream(ctx context.Context, tenant string, stream distributor.
 	return err
 }
 
-func (t *Tee) sendOwnedStream(ctx context.Context, tenant string, stream distributor.KeyedStream) error {
+func (t *Tee) sendOwnedStream(ctx context.Context, stream distributor.KeyedStream) error {
 	var descs [1]ring.InstanceDesc
 	replicationSet, err := t.ringClient.Ring().Get(stream.HashKey, ring.WriteNoExtend, descs[:0], nil, nil)
 	if err != nil {

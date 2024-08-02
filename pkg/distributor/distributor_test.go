@@ -1380,6 +1380,10 @@ type mockTee struct {
 	tenant     string
 }
 
+func (m *mockTee) Stop() {
+	// no-op
+}
+
 func (mt *mockTee) Duplicate(tenant string, streams []KeyedStream) {
 	mt.mu.Lock()
 	defer mt.mu.Unlock()

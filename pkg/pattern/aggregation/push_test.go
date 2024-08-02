@@ -121,7 +121,6 @@ func Test_Push(t *testing.T) {
 			password:    "secret",
 			logger:      log.NewNopLogger(),
 			quit:        make(chan struct{}),
-			done:        make(chan struct{}),
 			backoff:     &backoff,
 			entries:     entries{},
 		}
