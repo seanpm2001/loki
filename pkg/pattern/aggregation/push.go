@@ -58,7 +58,6 @@ type Push struct {
 
 	// shutdown channels
 	quit chan struct{}
-	done chan struct{}
 
 	// auth
 	username, password string
@@ -135,7 +134,6 @@ func NewPush(
 		password:    password,
 		logger:      logger,
 		quit:        make(chan struct{}),
-		done:        make(chan struct{}),
 		backoff:     backoffCfg,
 		entries: entries{
 			entries: make([]entry, 0),
@@ -155,7 +153,6 @@ func (p *Push) WriteEntry(ts time.Time, e string, lbls labels.Labels) {
 func (p *Push) Stop() {
 	if p.quit != nil {
 		close(p.quit)
-		<-p.done
 		p.quit = nil
 	}
 }
@@ -215,7 +212,6 @@ func (p *Push) run(pushPeriod time.Duration) {
 
 	defer func() {
 		pushTicker.Stop()
-		close(p.done)
 	}()
 
 	for {

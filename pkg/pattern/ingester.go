@@ -41,6 +41,8 @@ type Config struct {
 	MaxClusters       int                   `yaml:"max_clusters,omitempty" doc:"description=The maximum number of detected pattern clusters that can be created by streams."`
 	MaxEvictionRatio  float64               `yaml:"max_eviction_ratio,omitempty" doc:"description=The maximum eviction ratio of patterns per stream. Once that ratio is reached, the stream will throttled pattern detection."`
 	MetricAggregation aggregation.Config    `yaml:"metric_aggregation,omitempty" doc:"description=Configures the metric aggregation and storage behavior of the pattern ingester."`
+	TeeParallelism    int                   `yaml:"tee_parallelism,omitempty"    doc:"description=The number of parallel goroutines to use for forwarding requests to the pattern ingester."`
+	TeeBufferSize     int                   `yaml:"tee_buffer_size,omitempty"    doc:"Maxiumum number of pending teed request to pattern ingesters. If the buffer is full the request is dropped."`
 
 	// For testing.
 	factory ring_client.PoolFactory `yaml:"-"`
@@ -51,11 +53,48 @@ func (cfg *Config) RegisterFlags(fs *flag.FlagSet) {
 	cfg.LifecyclerConfig.RegisterFlagsWithPrefix("pattern-ingester.", fs, util_log.Logger)
 	cfg.ClientConfig.RegisterFlags(fs)
 	cfg.MetricAggregation.RegisterFlagsWithPrefix(fs, "pattern-ingester.")
-	fs.BoolVar(&cfg.Enabled, "pattern-ingester.enabled", false, "Flag to enable or disable the usage of the pattern-ingester component.")
-	fs.IntVar(&cfg.ConcurrentFlushes, "pattern-ingester.concurrent-flushes", 32, "How many flushes can happen concurrently from each stream.")
-	fs.DurationVar(&cfg.FlushCheckPeriod, "pattern-ingester.flush-check-period", 1*time.Minute, "How often should the ingester see if there are any blocks to flush. The first flush check is delayed by a random time up to 0.8x the flush check period. Additionally, there is +/- 1% jitter added to the interval.")
-	fs.IntVar(&cfg.MaxClusters, "pattern-ingester.max-clusters", drain.DefaultConfig().MaxClusters, "The maximum number of detected pattern clusters that can be created by the pattern ingester.")
-	fs.Float64Var(&cfg.MaxEvictionRatio, "pattern-ingester.max-eviction-ratio", drain.DefaultConfig().MaxEvictionRatio, "The maximum eviction ratio of patterns per stream. Once that ratio is reached, the stream will be throttled for pattern detection.")
+	fs.BoolVar(
+		&cfg.Enabled,
+		"pattern-ingester.enabled",
+		false,
+		"Flag to enable or disable the usage of the pattern-ingester component.",
+	)
+	fs.IntVar(
+		&cfg.ConcurrentFlushes,
+		"pattern-ingester.concurrent-flushes",
+		32,
+		"How many flushes can happen concurrently from each stream.",
+	)
+	fs.DurationVar(
+		&cfg.FlushCheckPeriod,
+		"pattern-ingester.flush-check-period",
+		1*time.Minute,
+		"How often should the ingester see if there are any blocks to flush. The first flush check is delayed by a random time up to 0.8x the flush check period. Additionally, there is +/- 1% jitter added to the interval.",
+	)
+	fs.IntVar(
+		&cfg.MaxClusters,
+		"pattern-ingester.max-clusters",
+		drain.DefaultConfig().MaxClusters,
+		"The maximum number of detected pattern clusters that can be created by the pattern ingester.",
+	)
+	fs.Float64Var(
+		&cfg.MaxEvictionRatio,
+		"pattern-ingester.max-eviction-ratio",
+		drain.DefaultConfig().MaxEvictionRatio,
+		"The maximum eviction ratio of patterns per stream. Once that ratio is reached, the stream will be throttled for pattern detection.",
+	)
+	fs.IntVar(
+		&cfg.TeeParallelism,
+		"pattern-ingester.tee-parallelism",
+		5,
+		"The number of parallel goroutines to use for forwarding requests to the pattern ingester.",
+	)
+	fs.IntVar(
+		&cfg.TeeBufferSize,
+		"pattern-ingester.tee-buffer-size",
+		100,
+		"Maxiumum number of pending teed request to pattern ingesters. If the buffer is full the request is dropped.",
+	)
 }
 
 func (cfg *Config) Validate() error {

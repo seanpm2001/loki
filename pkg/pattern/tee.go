@@ -22,6 +22,18 @@ type Tee struct {
 
 	ingesterAppends         *prometheus.CounterVec
 	fallbackIngesterAppends *prometheus.CounterVec
+
+	teedRequests *prometheus.CounterVec
+
+	requestCh chan request
+
+	// shutdown channel
+	quit chan struct{}
+}
+
+type request struct {
+	tenant string
+	stream distributor.KeyedStream
 }
 
 func NewTee(
@@ -43,34 +55,53 @@ func NewTee(
 			Name: "pattern_ingester_fallback_appends_total",
 			Help: "The total number of batch appends sent to fallback pattern ingesters, for not owned streams.",
 		}, []string{"ingester", "status"}),
+		teedRequests: promauto.With(registerer).NewCounterVec(prometheus.CounterOpts{
+			Name: "pattern_ingester_teed_requests_total",
+			Help: "The total number of batch appends sent to fallback pattern ingesters, for not owned streams.",
+		}, []string{"tenant", "status"}),
 		cfg:        cfg,
 		ringClient: ringClient,
+		requestCh:  make(chan request, cfg.TeeBufferSize),
+		quit:       make(chan struct{}),
+	}
+
+	for i := 0; i < cfg.TeeParallelism; i++ {
+		go t.run()
 	}
 
 	return t, nil
 }
 
-// Duplicate Implements distributor.Tee which is used to tee distributor requests to pattern ingesters.
-func (t *Tee) Duplicate(tenant string, streams []distributor.KeyedStream) {
-	for idx := range streams {
-		go func(stream distributor.KeyedStream) {
-			if err := t.sendStream(tenant, stream); err != nil {
+func (t *Tee) run() {
+	for {
+		select {
+		case <-t.quit:
+			return
+		case req := <-t.requestCh:
+			ctx, cancel := context.WithTimeout(
+				user.InjectOrgID(context.Background(), req.tenant),
+				t.cfg.ClientConfig.RemoteTimeout,
+			)
+			defer cancel()
+
+			if err := t.sendStream(ctx, req.tenant, req.stream); err != nil {
 				level.Error(t.logger).Log("msg", "failed to send stream to pattern ingester", "err", err)
 			}
-		}(streams[idx])
+		}
 	}
 }
 
-func (t *Tee) sendStream(tenant string, stream distributor.KeyedStream) error {
-	err := t.sendOwnedStream(tenant, stream)
+func (t *Tee) sendStream(ctx context.Context, tenant string, stream distributor.KeyedStream) error {
+	err := t.sendOwnedStream(ctx, tenant, stream)
 	if err == nil {
+		// Success, return early
 		return nil
 	}
 
 	// Pattern ingesters serve 2 functions, processing patterns and aggregating metrics.
 	// Only owned streams are processed for patterns, however any pattern ingester can
 	// aggregate metrics for any stream. Therefore, if we can't send the owned stream,
-	// try to send it to any pattern ingester so we at least capture the metrics.
+	// try to forward request to any pattern ingester so we at least capture the metrics.
 	replicationSet, err := t.ringClient.Ring().GetAllHealthy(ring.Read)
 	if replicationSet.Instances == nil {
 		return errors.New("no instances found")
@@ -86,11 +117,6 @@ func (t *Tee) sendStream(tenant string, stream distributor.KeyedStream) error {
 				},
 			}
 
-			ctx, cancel := context.WithTimeout(
-				user.InjectOrgID(context.Background(), tenant),
-				t.cfg.ClientConfig.RemoteTimeout,
-			)
-			defer cancel()
 			_, err = client.(logproto.PatternClient).Push(ctx, req)
 			if err != nil {
 				t.fallbackIngesterAppends.WithLabelValues(addr, "fail").Inc()
@@ -105,7 +131,7 @@ func (t *Tee) sendStream(tenant string, stream distributor.KeyedStream) error {
 	return err
 }
 
-func (t *Tee) sendOwnedStream(tenant string, stream distributor.KeyedStream) error {
+func (t *Tee) sendOwnedStream(ctx context.Context, tenant string, stream distributor.KeyedStream) error {
 	var descs [1]ring.InstanceDesc
 	replicationSet, err := t.ringClient.Ring().Get(stream.HashKey, ring.WriteNoExtend, descs[:0], nil, nil)
 	if err != nil {
@@ -125,8 +151,6 @@ func (t *Tee) sendOwnedStream(tenant string, stream distributor.KeyedStream) err
 		},
 	}
 
-	ctx, cancel := context.WithTimeout(user.InjectOrgID(context.Background(), tenant), t.cfg.ClientConfig.RemoteTimeout)
-	defer cancel()
 	_, err = client.(logproto.PatternClient).Push(ctx, req)
 	if err != nil {
 		t.ingesterAppends.WithLabelValues(addr, "fail").Inc()
@@ -134,4 +158,33 @@ func (t *Tee) sendOwnedStream(tenant string, stream distributor.KeyedStream) err
 	}
 	t.ingesterAppends.WithLabelValues(addr, "success").Inc()
 	return nil
+}
+
+// Duplicate Implements distributor.Tee which is used to tee distributor requests to pattern ingesters.
+func (t *Tee) Duplicate(tenant string, streams []distributor.KeyedStream) {
+	for idx := range streams {
+		go func(stream distributor.KeyedStream) {
+			req := request{
+				tenant: tenant,
+				stream: stream,
+			}
+
+			// We need to prioritize protecting distributors to prevent bigger problems to the system, so
+			// we respond to backpressure by dropping requests if the channel is full
+			select {
+			case t.requestCh <- req:
+				t.teedRequests.WithLabelValues(tenant, "queued").Inc()
+				return
+			default:
+				t.teedRequests.WithLabelValues(tenant, "dropped").Inc()
+				return
+			}
+		}(streams[idx])
+	}
+}
+
+// Stop will cancel any ongoing requests and stop the goroutine listening for requests
+func (t *Tee) Stop() {
+	close(t.quit)
+	t.requestCh = make(chan request, t.cfg.TeeBufferSize)
 }
